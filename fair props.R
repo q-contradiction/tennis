@@ -6,12 +6,13 @@
 # Additional methods included in the implied package
 # applying same logic to different bookmakers 
 # and find the optimal method to arrive at a set of fair probabilities
-# using rank probability score, linear regression and returns from fair odds
+# using brier score, linear regression and returns from fair odds
 
 # all data taken from tennis-data.co.uk
 
 suppressPackageStartupMessages({
   library(broom)
+  library(scales)
   library(tidyverse)
   library(implied) #https://opisthokonta.net/?p=1797
 })
@@ -36,7 +37,7 @@ tennis_odds <- suppressWarnings(mutate_at(tennis_odds, vars(unlist(odds_abbs)), 
 n_obs <- colMeans(!is.na(tennis_odds[, unlist(map(odds_abbs, 1))])) %>% 
   sort(decreasing = T)
 
-# Fair probabilities ------------------------------------------------------
+# Fair Probabilities ------------------------------------------------------
 
 fair_probabilities <- function(bookmaker, method) {
   
@@ -49,9 +50,9 @@ fair_probabilities <- function(bookmaker, method) {
   df <- tennis_odds[valid_overround, odds] 
   
   for (i in seq_along(odds)) {
-    df <- filter(df, !!sym(odds[i]) > 1.1)
+    df <- filter(df, !!sym(odds[i]) > 1)
   }
-  #browser()
+
   fair_props <- implied_probabilities(df[, odds], method) 
   
   indexes <- which(!fair_props[["problematic"]])  
@@ -68,7 +69,6 @@ props_table <- expand.grid(bookmaker = c("Pinnacle", "Bet365", "Ladbrokes", "Exp
                            method = methods[1:5], 
                            stringsAsFactors = F) %>%
   pmap_dfr(fair_probabilities, .progress = T)
-
 
 # Evaluation --------------------------------------------------------------
 
@@ -98,6 +98,7 @@ reg <- props_long %>%
          adj_r_squared = map_dbl(model, ~ glance(.x) %>% pull(adj.r.squared))) %>%
   select(bookmaker, method, coef, adj_r_squared) %>%
   unnest(cols = c(coef)) %>%
+  # deviation from optimal line y=x
   mutate(dev = abs(estimate - 1)) %>%
   arrange(dev)
 
@@ -120,12 +121,24 @@ fair_bets <- props_table %>%
 
 # steady negative profit for basic (underestimating low probability events) 
 # and positive yield for bb method (overestimating)
-# power overestimates sligtly
+# power overestimates slightly
 # or & wpo most reliable  
 fair_bets %>% 
   ggplot(aes(x = NBets, y = fair_PnL_r, color = method)) + 
   geom_line() + 
   geom_hline(yintercept = 0, linetype = "dashed", alpha = 0.5) +
-  facet_wrap(bookmaker ~., scales = "free_x") + theme_bw() +
+  facet_wrap(bookmaker ~., scales = "free_x") + 
+  theme_bw() + scale_x_continuous(labels = label_number(scale = 1e-3, suffix = "k")) +
   labs(title = "Profit & Loss with fair odds from different bookies",
        subtitle = "Different ovverround methods")
+
+fair_bets %>%
+  group_by(bookmaker, method) %>%
+  slice_max(NBets) %>%
+  ungroup() %>%
+  ggplot(aes(x = method, y = yield, fill = bookmaker)) +
+  geom_bar(stat = "identity", position = "dodge", color = "black") + 
+  theme_bw() + scale_y_continuous(labels = percent_format()) +
+  theme(axis.title.x = element_blank(), 
+        axis.text.x = element_text(size = 12))
+  
